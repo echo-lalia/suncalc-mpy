@@ -1,4 +1,35 @@
 """
+This was pulled from https://github.com/kylebarron/suncalc-py/blob/master/suncalc/suncalc.py
+And ported to MicroPython by Ethan Lacasse.
+
+Port involved:
+- Removing Numpy/Pandas functionality,
+    - Pandas was not a dependancy, so removing Pandas
+      mainly just meant deleting unused code.
+
+    - Removing Numpy meant replacing all Numpy functions
+      with their equivalent math functions,
+      and replacing array math with list comprehension
+
+- Adding epoch offset to convert between unix/embedded epoch standards
+
+- Replacing soft Python constants with real MicroPython constants
+
+- Making date parameters optional (uses time.now() if unset)
+
+- Rewriting equations to use DecimalNumber for precision
+  - This is much slower than the original math, however, MicroPython's single-precision floats
+    gave practically useless results, only accurate to about half a day.
+    This new approach should be obsurdly accurate (... and slow)
+    and I think most embedded use cases for this module would prefer the accuracy.
+  - mpy_decimal module has been forked and updated for use with this module
+
+- Adding some additional docstrings and other formatting.
+
+
+--------------------------
+
+
 suncalc-py is ported from suncalc.js under the BSD-2-Clause license.
 
 Copyright (c) 2014, Vladimir Agafonkin
@@ -25,106 +56,147 @@ TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF TH
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-from datetime import datetime
-from typing import Iterable, Tuple
+# this is the difference between esp32 MicroPython epoch,
+# and the unix epoch (2000-01-01 vs 1970-01-01)
+# set to 0 if your platform uses unix epoch
+_EPOCH_OFFSET = const(946684800)
 
-import numpy as np
-
+# uses decimal module for high precision
+# this is very slow, but very accurate.
+# suncalc is not very useful with single-precision floats.
 try:
-    import pandas as pd
-except ImportError:
-    pd = None
+    from .mpy_decimal import DecimalNumber as decimal
+except:
+    from suncalc.mpy_decimal import DecimalNumber as decimal
+
+
+
+#from datetime import datetime
+import time
+
+#import numpy as np
+import math
+
+pd = None
 
 # shortcuts for easier to read formulas
-PI = np.pi
-sin = np.sin
-cos = np.cos
-tan = np.tan
-asin = np.arcsin
-atan = np.arctan2
-acos = np.arccos
+#PI = math.pi
+PI = decimal.pi()
+#sin = math.sin
+#cos = math.cos
+#tan = math.tan
+#asin = math.asin
+#atan = math.atan2
+acos = math.acos
 rad = PI / 180
 
+def sin(decimal_input) -> decimal:
+    if isinstance(decimal_input, (int, float)):
+        return math.sin(decimal_input)
+    return decimal_input.sin()
+
+def cos(decimal_input) -> decimal:
+    if isinstance(decimal_input, (int, float)):
+        return math.cos(decimal_input)
+    return decimal_input.cos()
+
+def asin(decimal_input) -> decimal:
+    if isinstance(decimal_input, (int, float)):
+        return math.asin(decimal_input)
+    return decimal_input.asin()
+
+def tan(decimal_input) -> decimal:
+    if isinstance(decimal_input, (int, float)):
+        return math.tan(decimal_input)
+    return decimal_input.tan()
+
+def atan(input1, input2) -> decimal:
+    
+    if isinstance(input1, (int, float)):
+        input1 = decimal(input1)
+    if isinstance(input2, (int, float)):
+        input2 = decimal(input2)
+    
+    return decimal.atan2(input1, input2)
+
+def to_degrees(decimal_input) -> decimal:
+    if isinstance(decimal_input, (int, float)):
+        return math.degrees(decimal_input)
+    return decimal_input.degrees()
+
+def sign(in_num) -> int:
+    if in_num == 0:
+        return 0
+    if in_num < 0:
+        return -1
+    if in_num >0:
+        return 1
+
+# def to_degrees(x):
+#     if not isinstance(x, (int, float)):
+#         x = float(x)
+#     return math.degrees(x)
 # sun times configuration (angle, morning name, evening name)
-DEFAULT_TIMES = [
+_DEFAULT_TIMES = (
     (-0.833, 'sunrise', 'sunset'),
     (-0.3, 'sunrise_end', 'sunset_start'),
     (-6, 'dawn', 'dusk'),
     (-12, 'nautical_dawn', 'nautical_dusk'),
     (-18, 'night_end', 'night'),
-    (6, 'golden_hour_end', 'golden_hour')
-] # yapf: disable
+    (6, 'golden_hour_end', 'golden_hour'),
+    )
 
 # date/time constants and conversions
-dayMs = 1000 * 60 * 60 * 24
-J1970 = 2440588
-J2000 = 2451545
+_DAY_MS = const(1000 * 60 * 60 * 24)
+_DAY_SECONDS = const(60 * 60 * 24)
+_J1970 = const(2440588)
+_J2000 = const(2451545)
 
 
-def to_milliseconds(date):
-    # datetime.datetime
-    if isinstance(date, datetime):
-        return date.timestamp() * 1000
+def to_milliseconds(epoch: int|float|tuple = None) -> decimal:
+    """Get miliseconds from given epoch"""
+    # original code returned time in milliseconds
+    # using on datetime.timestamp()
+    # For MicroPython, it's probably easier to just use the Time module
+    
+    # NOTE: this requires system time to be set to current UTC time!
+    # Expected result is same as "datetime.now().timestamp()" in CPython (within 1000ms; int instead of float)
+    
+    # auto get time
+    if epoch is None:
+        epoch = time.time()
+    
+    # support for datetime tuples
+    if type(epoch) == tuple:
+        epoch = time.mktime(epoch)
+    
+    # adjust for unix vs embedded epoch
+    epoch = decimal(epoch + _EPOCH_OFFSET)
 
-    # Pandas series of Pandas datetime objects
-    if pd and pd.api.types.is_datetime64_any_dtype(date):
-        # A datetime-like series coerce to int is (always?) in nanoseconds
-        return date.astype('int64') / 10 ** 6
-
-    # Single pandas Timestamp
-    if pd and isinstance(date, pd.Timestamp):
-        date = date.to_numpy()
-
-    # Numpy datetime64
-    if np.issubdtype(date.dtype, np.datetime64):
-        return date.astype('datetime64[ms]').astype('int64')
-
-    # Last-ditch effort
-    if pd:
-        return np.array(pd.to_datetime(date).astype('int64') / 10 ** 6)
-
-    raise ValueError(f'Unknown date type: {type(date)}')
+    return epoch * 1000
 
 
 def to_julian(date):
-    return to_milliseconds(date) / dayMs - 0.5 + J1970
+    return to_milliseconds(date) / _DAY_MS - 0.5 + _J1970
 
 
 def from_julian(j):
-    ms_date = (j + 0.5 - J1970) * dayMs
-
-    if pd:
-        # If a single value, coerce to a pd.Timestamp
-        if np.prod(np.array(ms_date).shape) == 1:
-            return pd.to_datetime(ms_date, unit='ms')
-
-        # .astype(datetime) is much faster than pd.to_datetime but it only works
-        # on series of dates, not on a single pd.Timestamp, so I fall back to
-        # pd.to_datetime for that.
-        try:
-            return (pd.Series(ms_date) * 1e6).astype('datetime64[ns, UTC]')
-        except TypeError:
-            return pd.to_datetime(ms_date, unit='ms')
-
-    # ms_date could be iterable
-    try:
-        return np.array([
-            datetime.utcfromtimestamp(x / 1000)
-            if not np.isnan(x) else np.datetime64('NaT') for x in ms_date])
-
-    except TypeError:
-        return datetime.utcfromtimestamp(
-            ms_date / 1000) if not np.isnan(ms_date) else np.datetime64('NaT')
+    epoch = (j + 0.5 - _J1970) * _DAY_SECONDS
+    
+    # undo unix epoch offset
+    epoch -= _EPOCH_OFFSET
+    
+    return time.localtime(int(epoch))
 
 
 def to_days(date):
-    return to_julian(date) - J2000
+    return to_julian(date) - _J2000
 
 
 # general calculations for position
 
 # obliquity of the Earth
-e = rad * 23.4397
+e = rad * decimal('23.4397')
 
 
 def right_ascension(l, b):
@@ -144,33 +216,38 @@ def altitude(H, phi, dec):
 
 
 def sidereal_time(d, lw):
-    return rad * (280.16 + 360.9856235 * d) - lw
+    return rad * (280.16 + (decimal('360.9856235') * d)) - lw
 
 
 def astro_refraction(h):
     # the following formula works for positive altitudes only.
     # if h = -0.08901179 a div/0 would occur.
-    h = np.maximum(h, 0)
+    if type(h) == list:
+        h = [max(hi, 0) for hi in h]
+        return [decimal('0.0002967') / tan(hi + decimal('0.00312536') / (hi + decimal('0.08901179'))) for hi in h]
+    
+    
+    h = max(0, h)
 
     # formula 16.4 of "Astronomical Algorithms" 2nd edition by Jean Meeus
     # (Willmann-Bell, Richmond) 1998. 1.02 / tan(h + 10.26 / (h + 5.10)) h in
     # degrees, result in arc minutes -> converted to rad:
-    return 0.0002967 / np.tan(h + 0.00312536 / (h + 0.08901179))
+    return decimal('0.0002967') / tan(h + decimal('0.00312536') / (h + decimal('0.08901179')))
 
 
 # general sun calculations
 
 
 def solar_mean_anomaly(d):
-    return rad * (357.5291 + 0.98560028 * d)
+    return rad * (decimal('357.5291') + decimal('0.98560028') * d)
 
 
 def ecliptic_longitude(M):
     # equation of center
-    C = rad * (1.9148 * sin(M) + 0.02 * sin(2 * M) + 0.0003 * sin(3 * M))
+    C = rad * (decimal('1.9148') * sin(M) + 0.02 * sin(2 * M) + decimal('0.0003') * sin(3 * M))
 
     # perihelion of the Earth
-    P = rad * 102.9372
+    P = rad * decimal('102.9372')
 
     return M + C + P + PI
 
@@ -183,27 +260,39 @@ def sun_coords(d):
 
 
 # calculations for sun times
-J0 = 0.0009
+J0 = decimal('0.0009')
 
 
 def julian_cycle(d, lw):
-    return np.round(d - J0 - lw / (2 * PI))
+    return round(d - J0 - lw / (2 * PI))
 
 
 def approx_transit(Ht, lw, n):
+    # no NP arrays, so we gotta accept regular lists
+    if type(Ht) == list:
+        return [J0 + (Hti + lw) / (2 * PI) + n for Hti in Ht]
+    
     return J0 + (Ht + lw) / (2 * PI) + n
 
 
 def solar_transit_j(ds, M, L):
-    return J2000 + ds + 0.0053 * sin(M) - 0.0069 * sin(2 * L)
+    # no NP arrays, so we gotta accept regular lists
+    if type(ds) == list:
+        return [_J2000 + dsi + decimal('0.0053') * sin(M) - decimal('0.0069') * sin(2 * L) for dsi in ds]
+    
+    return _J2000 + ds + decimal('0.0053') * sin(M) - decimal('0.0069') * sin(2 * L)
 
 
 def hour_angle(h, phi, d):
+    # no NP arrays, so we gotta accept regular lists
+    if type(h) == list:
+        return [acos((sin(hi) - sin(phi) * sin(d)) / (cos(phi) * cos(d))) for hi in h]
+    
     return acos((sin(h) - sin(phi) * sin(d)) / (cos(phi) * cos(d)))
 
 
 def observer_angle(height):
-    return -2.076 * np.sqrt(height) / 60
+    return decimal('-2.076') * math.sqrt(height) / 60
 
 
 def get_set_j(h, lw, phi, dec, n, M, L):
@@ -214,47 +303,42 @@ def get_set_j(h, lw, phi, dec, n, M, L):
     return solar_transit_j(a, M, L)
 
 
-def get_position(date, lng, lat):
+def get_position(lng, lat, date=None, degrees=False):
     """Calculate sun position for a given date and latitude/longitude
     """
+    
     lw = rad * -lng
     phi = rad * lat
     d = to_days(date)
 
     c = sun_coords(d)
     H = sidereal_time(d, lw) - c['ra']
-
+    
+    az = azimuth(H, phi, c['dec'])
+    al = altitude(H, phi, c['dec'])
+    
+    
+    if degrees:
+        az = to_degrees(az)
+        al = to_degrees(al)
+    
     return {
-        'azimuth': azimuth(H, phi, c['dec']),
-        'altitude': altitude(H, phi, c['dec'])}
+        'azimuth': float(az),
+        'altitude': float(al)}
 
 
 def get_times(
-        date,
         lng,
         lat,
+        date=None,
         height=0,
-        times: Iterable[Tuple[float, str, str]] = DEFAULT_TIMES):
+        times: Iterable[Tuple[float, str, str]] = _DEFAULT_TIMES):
     """Calculate sun times
 
     Calculate sun times for a given date, latitude/longitude, and,
     optionally, the observer height (in meters) relative to the horizon
     """
-    # If inputs are vectors (or some list-like type), then coerce them to
-    # numpy arrays
-    #
-    # When inputs are pandas series, then intermediate objects will also be
-    # pandas series, and you won't be able to do 2d broadcasting.
-    try:
-        len(date)
-        len(lat)
-        len(lng)
-        array_input = True
-        date = np.array(date)
-        lat = np.array(lat)
-        lng = np.array(lng)
-    except TypeError:
-        array_input = False
+    
 
     lw = rad * -lng
     phi = rad * lat
@@ -275,24 +359,17 @@ def get_times(
         'solar_noon': from_julian(Jnoon),
         'nadir': from_julian(Jnoon - 0.5)}
 
-    angles = np.array([time[0] for time in times])
-    h0 = (angles + dh) * rad
-
-    # If array input, add an axis to allow 2d broadcasting
-    if array_input:
-        h0 = h0[:, np.newaxis]
-
+    angles = [time[0] for time in times]
+    # h0 = (angles + dh) * rad
+    h0 = [(angle + dh) * rad for angle in angles]
+    
     # Need to add an axis for 2D broadcasting
     Jset = get_set_j(h0, lw, phi, dec, n, M, L)
-    Jrise = Jnoon - (Jset - Jnoon)
-
+    Jrise = [Jnoon - (Jseti - Jnoon) for Jseti in Jset]
+    
     for idx, time in enumerate(times):
-        if array_input:
-            result[time[1]] = from_julian(Jrise[idx, :])
-            result[time[2]] = from_julian(Jset[idx, :])
-        else:
-            result[time[1]] = from_julian(Jrise[idx])
-            result[time[2]] = from_julian(Jset[idx])
+        result[time[1]] = from_julian(Jrise[idx])
+        result[time[2]] = from_julian(Jset[idx])
 
     return result
 
@@ -306,23 +383,23 @@ def moon_coords(d):
     """
 
     # ecliptic longitude
-    L = rad * (218.316 + 13.176396 * d)
+    L = rad * (decimal('218.316') + decimal('13.176396') * d)
     # mean anomaly
-    M = rad * (134.963 + 13.064993 * d)
+    M = rad * (decimal('134.963') + decimal('13.064993') * d)
     # mean distance
-    F = rad * (93.272 + 13.229350 * d)
+    F = rad * (decimal('93.272') + decimal('13.229350') * d)
 
     # longitude
-    l = L + rad * 6.289 * sin(M)
+    l = L + rad * decimal('6.289') * sin(M)
     # latitude
-    b = rad * 5.128 * sin(F)
+    b = rad * decimal('5.128') * sin(F)
     # distance to the moon in km
     dt = 385001 - 20905 * cos(M)
 
     return {'ra': right_ascension(l, b), 'dec': declination(l, b), 'dist': dt}
 
 
-def getMoonPosition(date, lat, lng):
+def get_moon_position(lat, lng, date=None, degrees=False):
 
     lw = rad * -lng
     phi = rad * lat
@@ -338,9 +415,15 @@ def getMoonPosition(date, lat, lng):
 
     # altitude correction for refraction
     h = h + astro_refraction(h)
+    
+    az = azimuth(H, phi, c['dec'])
+    
+    if degrees:
+        az = to_degrees(az)
+        h = to_degrees(h)
 
     return {
-        'azimuth': azimuth(H, phi, c['dec']),
+        'azimuth': az,
         'altitude': h,
         'distance': c['dist'],
         'parallacticAngle': pa}
@@ -352,7 +435,7 @@ def getMoonPosition(date, lat, lng):
 # Richmond) 1998.
 
 
-def getMoonIllumination(date):
+def get_moon_illumination(date=None):
 
     d = to_days(date)
     s = sun_coords(d)
@@ -371,68 +454,7 @@ def getMoonIllumination(date):
         cos(s['dec']) * sin(m['dec']) * cos(s['ra'] - m['ra']))
 
     return {
-        'fraction': (1 + cos(inc)) / 2,
-        'phase': 0.5 + 0.5 * inc * np.sign(angle) / PI,
-        'angle': angle}
+        'fraction': float((1 + cos(inc)) / 2),
+        'phase': float(0.5 + 0.5 * inc * sign(angle) / PI),
+        'angle': float(angle)}
 
-
-# def hoursLater(date, h):
-#     # TODO: pythonize
-#     return new Date(date.valueOf() + h * dayMs / 24)
-
-# calculations for moon rise/set times are based on
-# http://www.stargazing.net/kepler/moonrise.html article
-
-# def getMoonTimes(date, lat, lng, inUTC):
-#     var t = new Date(date);
-#     if (inUTC) t.setUTCHours(0, 0, 0, 0);
-#     else t.setHours(0, 0, 0, 0);
-#
-#     var hc = 0.133 * rad,
-#         h0 = SunCalc.getMoonPosition(t, lat, lng).altitude - hc,
-#         h1, h2, rise, set, a, b, xe, ye, d, roots, x1, x2, dx;
-#
-#     // go in 2-hour chunks, each time seeing if a 3-point quadratic curve crosses zero (which means rise or set)
-#     for (var i = 1; i <= 24; i += 2) {
-#         h1 = SunCalc.getMoonPosition(hoursLater(t, i), lat, lng).altitude - hc;
-#         h2 = SunCalc.getMoonPosition(hoursLater(t, i + 1), lat, lng).altitude - hc;
-#
-#         a = (h0 + h2) / 2 - h1;
-#         b = (h2 - h0) / 2;
-#         xe = -b / (2 * a);
-#         ye = (a * xe + b) * xe + h1;
-#         d = b * b - 4 * a * h1;
-#         roots = 0;
-#
-#         if (d >= 0) {
-#             dx = Math.sqrt(d) / (Math.abs(a) * 2);
-#             x1 = xe - dx;
-#             x2 = xe + dx;
-#             if (Math.abs(x1) <= 1) roots++;
-#             if (Math.abs(x2) <= 1) roots++;
-#             if (x1 < -1) x1 = x2;
-#         }
-#
-#         if (roots === 1) {
-#             if (h0 < 0) rise = i + x1;
-#             else set = i + x1;
-#
-#         } else if (roots === 2) {
-#             rise = i + (ye < 0 ? x2 : x1);
-#             set = i + (ye < 0 ? x1 : x2);
-#         }
-#
-#         if (rise && set) break;
-#
-#         h0 = h2;
-#     }
-#
-#     var result = {};
-#
-#     if (rise) result.rise = hoursLater(t, rise);
-#     if (set) result.set = hoursLater(t, set);
-#
-#     if (!rise && !set) result[ye > 0 ? 'alwaysUp' : 'alwaysDown'] = true;
-#
-#     return result;
-# };
