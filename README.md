@@ -13,14 +13,18 @@
 </p>
 
 
-A fast, vectorized Python implementation of [`suncalc.js`][suncalc-js] for
-calculating sun position and sunlight phases (times for sunrise, sunset, dusk,
+A slow, accurate, MicroPython implementation of [suncalc-py](https://github.com/kylebarron/suncalc-py), which itself is ported from [`suncalc.js`][suncalc-js].
+For calculating sun position and sunlight phases (times for sunrise, sunset, dusk,
 etc.) for the given location and time.
+Also offers functions for getting moon position and illumination.
 
 [suncalc-js]: https://github.com/mourner/suncalc
 
-While other similar libraries exist, I didn't originally encounter any that met
-my requirements of being openly-licensed, vectorized, and simple to use <sup>1</sup>.
+MicroPython's single-precision floats (which are the defualt on most ports) are too inaccurate for most of these calculations.   
+Therefore, this port includes the "mpy_decimal" module, which provides a type for precise decimal numbers, with arbitrary precision.
+This approach is much slower than the original, and may not be optimal for every use case. However, results should be extremely accurate. 
+
+Note: the public functions "get_position", "get_times", "get_moon_position", and "get_moon_illumination" all convert these decimals into MicroPython floats.
 
 ## Install
 
