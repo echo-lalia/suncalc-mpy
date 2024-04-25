@@ -1,4 +1,4 @@
-# suncalc-py
+# suncalc-mpy
 
 <p>
   <a href="https://github.com/kylebarron/suncalc-py/actions?query=workflow%3ACI" target="_blank">
