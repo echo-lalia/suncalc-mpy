@@ -1,5 +1,4 @@
-__author__ = """Kyle Barron"""
-__email__ = 'kylebarron2@gmail.com'
-__version__ = '0.1.3'
+__author__ = """Ethan Lacasse"""
+__version__ = '0.2.0'
 
-from .suncalc import get_position, get_times
+from .suncalc import get_position, get_times, get_moon_position, get_moon_illumination
