@@ -1,17 +1,5 @@
 # suncalc-mpy
 
-<p>
-  <a href="https://github.com/kylebarron/suncalc-py/actions?query=workflow%3ACI" target="_blank">
-      <img src="https://github.com/kylebarron/suncalc-py/workflows/test/badge.svg" alt="Test">
-  </a>
-  <a href="https://pypi.org/project/suncalc" target="_blank">
-      <img src="https://img.shields.io/pypi/v/suncalc?color=%2334D058&label=pypi%20package" alt="Package version">
-  </a>
-  <a href="https://github.com/kylebarron/suncalc-py/blob/master/LICENSE" target="_blank">
-      <img src="https://img.shields.io/github/license/kylebarron/suncalc-py.svg" alt="Downloads">
-  </a>
-</p>
-
 
 A slow, accurate, MicroPython implementation of [suncalc-py](https://github.com/kylebarron/suncalc-py), which itself is ported from [`suncalc.js`][suncalc-js].
 For calculating sun position and sunlight phases (times for sunrise, sunset, dusk,
@@ -21,6 +9,8 @@ Also offers functions for getting moon position and illumination.
 [suncalc-js]: https://github.com/mourner/suncalc
 
 MicroPython's single-precision floats (which are the defualt on most ports) are too inaccurate for most of these calculations.   
+*(First testing with MP floats was only accurate to ~+/-6hours, which is pretty useless.)*
+
 Therefore, this port includes the "mpy_decimal" module, which provides a type for precise decimal numbers, with arbitrary precision.
 This approach is much slower than the original, and may not be optimal for every use case. However, results should be extremely accurate. 
 
